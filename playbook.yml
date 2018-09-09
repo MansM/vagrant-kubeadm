@@ -1,0 +1,198 @@
+- hosts: all
+  become: true
+  gather_facts: true
+  vars:
+    SERVICES_CIDR: 10.96.0.0/12
+    API_CIDR: 10.96.0.1
+  tasks:
+    ## install repo's and keys
+    - name: add kubeadm repo (RedHat/CentOS)
+      yum_repository:
+        name: kubernetes
+        description: kubernetes
+        baseurl: https://packages.cloud.google.com/yum/repos/kubernetes-el7-x86_64
+        enabled: 1
+        gpgcheck: 1
+        repo_gpgcheck: 1
+        gpgkey: https://packages.cloud.google.com/yum/doc/yum-key.gpg https://packages.cloud.google.com/yum/doc/rpm-package-key.gpg
+        #exclude: kube*
+      when: ansible_os_family == "RedHat"
+
+    - name: get gpg key for debian/docker
+      apt_key:
+        url: https://download.docker.com/linux/debian/gpg
+        state: present
+      when: ansible_os_family == "Debian"
+
+    - name: get gpg key for debian/kubernetes
+      apt_key:
+        url: https://packages.cloud.google.com/apt/doc/apt-key.gpg
+        state: present
+      when: ansible_os_family == "Debian"
+
+    - name: install https option for debian
+      package: name=apt-transport-https state=present
+      when: ansible_os_family == "Debian"
+
+    - name: install docker repo
+      apt_repository:
+        repo: deb https://download.docker.com/linux/debian {{ ansible_distribution_release }} stable
+        state: present
+      when: ansible_os_family == "Debian"
+
+    - name: install k8s repo
+      apt_repository:
+        repo: deb http://apt.kubernetes.io/ kubernetes-xenial main
+        state: present
+      when: ansible_os_family == "Debian"
+
+    ## Docker install
+    - name: install docker (RedHat/CentOS)
+      package: name=docker state=present
+      when: ansible_os_family == "RedHat"
+
+    - name: install docker (Ubuntu/Debian/Etc)
+      package: name=docker-ce state=present
+      when: ansible_os_family == "Debian"
+
+    - name: start and enable docker
+      service: name=docker state=started enabled=yes
+
+    ## Kubeadm
+    - name: install kubeadm
+      package: name=kubeadm state=present
+
+    ## Kubelet
+    - name: install kubelet
+      package: name=kubelet state=present
+
+    - name: start & enable kubelet
+      service: name=kubelet state=started enabled=true
+    
+    ## SElinux
+    - name: disable selinux
+      selinux: state=permissive policy=targeted
+      when: ansible_os_family == "RedHat"
+
+    - name: disable swap
+      mount:
+        path: swap
+        state: absent
+      when: ansible_os_family == "RedHat"
+
+    - name: remove current swap
+      shell: swapoff -a
+
+    - name: enable net.bridge.bridge-nf-call-iptables
+      sysctl: 
+        name: net.bridge.bridge-nf-call-iptables
+        value: 1
+        sysctl_set: yes
+        state: present
+        reload: yes
+
+- hosts: masters
+  become: true
+  gather_facts: true
+  tasks:
+    - name: install kubectl
+      package: name=kubectl state=present
+    
+    - name: fix kubectl config path
+      lineinfile:
+        path: /root/.profile
+        regexp: '^export KUBECONFIG'
+        line: export KUBECONFIG=/etc/kubernetes/admin.conf
+        state: present
+
+
+- hosts: all
+  become: true
+  gather_facts: true
+  tasks:
+    - set_fact: 
+        ext_ip: "{{ ansible_eth0.ipv4.address }}"
+      when: 
+        - ansible_os_family == "Debian"
+
+    - set_fact: 
+        ext_ip: "{{ ansible_enp0s3.ipv4.address }}"
+      when: 
+        - ansible_os_family == "RedHat"
+    
+    #Vagrant is most likely used when using virtualbox, which takes the first nic for outside communication
+    - set_fact: 
+        ext_ip: "{{ ansible_eth1.ipv4.address }}"
+      when: 
+        - ansible_virtualization_type == "virtualbox"
+        - ansible_os_family == "Debian"
+
+    - set_fact: 
+        ext_ip: "{{ ansible_enp0s8.ipv4.address }}"
+      when: 
+        - ansible_virtualization_type == "virtualbox"
+        - ansible_os_family == "RedHat"
+
+    - name: fix internal ip for vagrant
+      lineinfile:
+        path: /etc/default/kubelet
+        regexp: '^KUBELET_EXTRA_ARGS='
+        line: KUBELET_EXTRA_ARGS=--node-ip={{ ext_ip }}
+        state: present
+      when: 
+        - ansible_virtualization_type == "virtualbox"
+
+    - name: restart kubelet (only needed when previous changed)
+      systemd: name=kubelet state=restarted daemon_reload=yes
+
+
+- hosts: masters[0]
+  become: true
+  gather_facts: true
+  tasks:
+    - name: kubeadm init
+      shell: "kubeadm init \
+                --apiserver-advertise-address={{ ext_ip }} \
+                --pod-network-cidr 10.32.0.0/12"
+      register: kubeadm_result
+
+    - debug:
+        msg: "{{ kubeadm_result.stdout_lines[-1] }}"
+
+## this needs to go seperate for additional hosts
+- hosts: workers
+  become: true
+  gather_facts: yes
+  tasks:
+    - name: fetch token
+      shell: kubeadm token create
+      register: token_result
+      delegate_to: "{{ groups['masters'] | first }}"
+      tags: addworker   
+
+    - name: fetch ca-cert-hash
+      shell: openssl x509 -pubkey -in /etc/kubernetes/pki/ca.crt | openssl rsa -pubin -outform der 2>/dev/null | openssl dgst -sha256 -hex | sed 's/^.* //'
+      register: cacert_result
+      delegate_to: "{{ groups['masters'] | first }}"
+      tags: addworker
+  
+    - name: join cluster
+      shell: kubeadm join 192.168.10.10:6443 --token {{ token_result.stdout_lines[0] }} --discovery-token-ca-cert-hash sha256:{{ cacert_result.stdout_lines[0] }}
+      tags: addworker
+
+    - name: remove token
+      shell: kubeadm token delete {{ token_result.stdout_lines[0] }}
+      delegate_to: "{{ groups['masters'] | first }}"
+      tags: addworker
+
+
+- hosts: masters[0]
+  become: true
+  gather_facts: yes
+  tasks:
+    - name: install weavenet
+      shell: kubectl apply -f "https://cloud.weave.works/k8s/net?k8s-version=$(kubectl version | base64 | tr -d '\n')"
+      environment: 
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      args:
+        executable: /bin/bash

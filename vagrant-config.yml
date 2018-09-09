@@ -1,0 +1,18 @@
+config:
+  domainname: vagrant.test
+  iprange: "192.168"
+  ansible: playbook.yml
+  ansiblegroups:
+    masters:
+      - master1
+    workers:
+      - worker1
+vms:
+  master1:
+    hostname: "master1"
+    ip: "10.10"
+    memory: 2048
+    #dsize: 10
+  worker1:
+    hostname: "worker1"
+    ip: "10.20"
