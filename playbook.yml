@@ -1,10 +1,17 @@
 - hosts: all
   become: true
   gather_facts: true
-  vars:
-    SERVICES_CIDR: 10.96.0.0/12
+  vars:  
     API_CIDR: 10.96.0.1
+    POD_CIDR: 10.244.0.0/16
+    #WEAVE
+    # SERVICES_CIDR: 10.96.0.0/12
+    # POD_CIDR: 10.32.0.0/12
+    
   tasks:
+    - set_fact:
+          POD_CIDR: "{{ POD_CIDR }}"
+          kube_version: "1.11.3"
     ## install repo's and keys
     - name: add kubeadm repo (RedHat/CentOS)
       yum_repository:
@@ -58,16 +65,22 @@
     - name: start and enable docker
       service: name=docker state=started enabled=yes
 
-    ## Kubeadm
-    - name: install kubeadm
-      package: name=kubeadm state=present
 
     ## Kubelet
     - name: install kubelet
+      apt: name="kubelet={{ kube_version }}-00" state=present
+      when: ansible_os_family == "Debian"
+
+    - name: install kubelet
       package: name=kubelet state=present
+      when: ansible_os_family != "Debian"
 
     - name: start & enable kubelet
       service: name=kubelet state=started enabled=true
+
+    ## Kubeadm
+    - name: install kubeadm
+      package: name=kubeadm state=present
     
     ## SElinux
     - name: disable selinux
@@ -76,9 +89,16 @@
 
     - name: disable swap
       mount:
+        fstype: swap
         path: swap
         state: absent
-      when: ansible_os_family == "RedHat"
+
+    - name: disable swap
+      mount:
+        fstype: swap
+        path: none
+        state: absent
+      #when: ansible_os_family == "RedHat"
 
     - name: remove current swap
       shell: swapoff -a
@@ -145,19 +165,50 @@
     - name: restart kubelet (only needed when previous changed)
       systemd: name=kubelet state=restarted daemon_reload=yes
 
+- hosts: masters
+  become: true
+  gather_facts: true
+  tasks:
+    - name: get images
+      shell: kubeadm config images pull
+      register: result_pull
+      retries: 3
+      delay: 5
+      until: result_pull is succeeded
 
 - hosts: masters[0]
   become: true
   gather_facts: true
   tasks:
     - name: kubeadm init
-      shell: "kubeadm init \
+      shell: kubeadm init \
+                --node-name {{ ansible_nodename }} \
                 --apiserver-advertise-address={{ ext_ip }} \
-                --pod-network-cidr 10.32.0.0/12"
+                --pod-network-cidr={{ POD_CIDR }} \
+                --kubernetes-version={{ kube_version }}
       register: kubeadm_result
+      async: 1000
+      poll: 0
+      
+    - name: search and replace
+      replace:
+        path: /etc/kubernetes/manifests/kube-apiserver.yaml
+        regexp: '(\s+)failureThreshold: 8(\s+.*)?$'
+        replace: '\1failureThreshold: 20\2'
+      retries: 50
+      delay: 10
+      until: sed_result is succeeded
+      register: sed_result
 
-    - debug:
-        msg: "{{ kubeadm_result.stdout_lines[-1] }}"
+    - name: 'kubeadm sync checker'
+      async_status:
+        jid: "{{ kubeadm_result.ansible_job_id }}"
+      register: job_result
+      until: job_result.finished
+      retries: 30
+    
+    # - debug:
+    #     msg: "{{ kubeadm_result.stdout_lines[-1] }}"
 
 ## this needs to go seperate for additional hosts
 - hosts: workers
@@ -175,9 +226,12 @@
       register: cacert_result
       delegate_to: "{{ groups['masters'] | first }}"
       tags: addworker
-  
+
     - name: join cluster
-      shell: kubeadm join 192.168.10.10:6443 --token {{ token_result.stdout_lines[0] }} --discovery-token-ca-cert-hash sha256:{{ cacert_result.stdout_lines[0] }}
+      shell: kubeadm join 192.168.10.10:6443 \
+              --node-name {{ ansible_nodename }} \
+              --token {{ token_result.stdout_lines[0] }} \
+              --discovery-token-ca-cert-hash sha256:{{ cacert_result.stdout_lines[0] }}
       tags: addworker
 
     - name: remove token
@@ -190,9 +244,22 @@
   become: true
   gather_facts: yes
   tasks:
-    - name: install weavenet
-      shell: kubectl apply -f "https://cloud.weave.works/k8s/net?k8s-version=$(kubectl version | base64 | tr -d '\n')"
+    - name: install flannel
+      shell: kubectl apply -f https://raw.githubusercontent.com/coreos/flannel/c5d10c8/Documentation/kube-flannel.yml
       environment: 
         KUBECONFIG: /etc/kubernetes/admin.conf
       args:
         executable: /bin/bash
+
+
+    - name: install traeffik
+      shell: "kubectl apply -f {{ item }}"
+      environment: 
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      args:
+        executable: /bin/bash
+      loop:
+        - "https://raw.githubusercontent.com/containous/traefik/master/examples/k8s/traefik-rbac.yaml"
+        - "https://raw.githubusercontent.com/containous/traefik/master/examples/k8s/traefik-ds.yaml"
+
+
