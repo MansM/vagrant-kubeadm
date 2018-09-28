@@ -65,7 +65,6 @@
     - name: start and enable docker
       service: name=docker state=started enabled=yes
 
-
     ## Kubelet
     - name: install kubelet
       apt: name="kubelet={{ kube_version }}-00" state=present
@@ -124,7 +123,6 @@
         regexp: '^export KUBECONFIG'
         line: export KUBECONFIG=/etc/kubernetes/admin.conf
         state: present
-
 
 - hosts: all
   become: true
@@ -200,6 +198,14 @@
       until: sed_result is succeeded
       register: sed_result
 
+    - name: pause 5 sec
+      pause:
+        seconds: 5
+
+    - name: kill api-server to restart
+      shell: docker ps|grep k8s_kube-apiserver|awk {' print $1 '}|xargs docker kill
+      when: sed_result is succeeded
+
     - name: 'kubeadm sync checker'
       async_status:
         jid: "{{ kubeadm_result.ansible_job_id }}"
@@ -239,7 +245,6 @@
       delegate_to: "{{ groups['masters'] | first }}"
       tags: addworker
 
-
 - hosts: masters[0]
   become: true
   gather_facts: yes
@@ -250,7 +255,6 @@
         KUBECONFIG: /etc/kubernetes/admin.conf
       args:
         executable: /bin/bash
-
 
     - name: install traeffik
       shell: "kubectl apply -f {{ item }}"
