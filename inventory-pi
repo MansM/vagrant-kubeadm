@@ -1,8 +1,0 @@
-master1 ansible_host=10.0.1.13 ansible_user='pirate' 
-worker1 ansible_host=10.0.1.17 ansible_user='pirate' ansible_ssh_private_key_file='/Users/mansmatulewics/.ssh/kubepi'
-
-[masters]
-master1
-
-[workers]
-worker1
