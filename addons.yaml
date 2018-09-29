@@ -1,0 +1,29 @@
+- hosts: all
+  become: true
+  tasks:
+    - name: create sa for helm
+      local_action: shell kubectl create serviceaccount --namespace kube-system tiller
+
+    - name: create clusterrolebinding for helm
+      local_action: shell kubectl create clusterrolebinding tiller-cluster-rule --clusterrole=cluster-admin --serviceaccount=kube-system:tiller
+
+    - name: install helm
+      local_action: shell helm init --service-account tiller --upgrade --tiller-image=jessestuart/tiller:latest-arm
+
+
+      helm install stable/nfs-client-provisioner \
+                    --name=nfs  \
+                    --set nfs.server=10.0.1.2 \
+                    --set nfs.path=/volume1/nfstest \
+                    --set image.repository=quay.io/external_storage/nfs-client-provisioner-arm
+
+
+      helm install stable/prometheus \
+                    --name=prom \
+                    --values=prometheus-values.yml
+
+
+                    #sum(rate(node_network_transmit_bytes_total[5m])) by (instance)
+                    #sum(rate(container_cpu_load_average_10s[5m])) by (instance)
+
+                    
