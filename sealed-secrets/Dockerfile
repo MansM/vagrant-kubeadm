@@ -15,6 +15,6 @@ RUN curl -fsSL https://download.docker.com/linux/debian/gpg | apt-key add -
 RUN apt update && apt install -y  docker-ce
 
 RUN mkdir -p /go/src/github.com/bitnami-labs/
-WORKDIR 
+WORKDIR /go/src/github.com/bitnami-labs/
 
 CMD tail -f /var/log/alternatives.log
