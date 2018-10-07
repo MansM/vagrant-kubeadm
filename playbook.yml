@@ -110,6 +110,14 @@
         state: present
         reload: yes
 
+    - name: install open-iscsi
+      apt: name="open-iscsi" state=present
+      when: ansible_os_family == "Debian"
+
+    - name: install iscsi-initiator-utils (RedHat/CentOS)
+      package: name=iscsi-initiator-utils state=present
+      when: ansible_os_family == "RedHat"
+
 - hosts: masters
   become: true
   gather_facts: true
