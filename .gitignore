@@ -3,3 +3,4 @@
 *.retry
 admin.conf
 inventory-pi
+master.key
