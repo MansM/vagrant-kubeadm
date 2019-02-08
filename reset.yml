@@ -1,0 +1,19 @@
+- hosts: all
+  become: true
+  gather_facts: true
+  tasks:
+    - set_fact:
+        kube_version: "1.13.1"
+    
+    - name: kubeadm reset
+      shell: kubeadm reset --force
+
+    - name: install kubelet old
+      shell: apt install kubelet={{ kube_version }}-00 --allow-downgrades -y
+
+    - name: install kubeadm old
+      shell: apt install kubeadm={{ kube_version }}-00 --allow-downgrades -y
+
+    - name: Reboot a slow machine that might have lots of updates to apply
+      reboot:
+        reboot_timeout: 3600

@@ -1,0 +1,82 @@
+- hosts: all
+  become: true
+  gather_facts: true
+  vars:  
+    NEW_VERSION: 1.13.3
+  tasks:
+    - set_fact:
+        kube_version: "{{ NEW_VERSION }}"
+        cachable: true
+
+    - name: upgrade kubeadm
+      apt: name="kubeadm={{ kube_version }}-00" state=present
+      when: ansible_os_family == "Debian"
+
+- hosts: masters
+  become: true
+  gather_facts: true
+  serial: 1
+  tasks:
+      - name: update controlplane
+        shell: "kubeadm upgrade apply v{{ kube_version }} --force"
+
+- hosts: masters
+  become: true
+  gather_facts: true
+  serial: 1
+  tasks:
+    - name: install kubelet
+      apt: name="kubelet={{ kube_version }}-00" state=present
+      when: ansible_os_family == "Debian"
+
+    - name: install kubectl
+      apt: name="kubectl={{ kube_version }}-00" state=present
+      when: ansible_os_family == "Debian"
+
+- hosts: all
+  become: true
+  gather_facts: true
+  serial: 1
+  tasks:
+    - name: drain node
+      shell: "kubectl drain {{ ansible_nodename }} --ignore-daemonsets"
+      delegate_to: "{{ groups['masters'] | first }}"
+      environment: 
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      args:
+        executable: /bin/bash
+
+- hosts: workers
+  become: true
+  gather_facts: true
+  serial: 1
+  tasks:
+    - name: upgrade node config
+      shell: "kubeadm upgrade node config --kubelet-version v{{ kube_version }}"
+    
+    - name: install kubelet
+      apt: name="kubelet={{ kube_version }}-00" state=present
+      when: ansible_os_family == "Debian"
+
+
+- hosts: all
+  become: true
+  gather_facts: true
+  serial: 1
+  tasks:
+    - name: restart kubelet
+      systemd: name=kubelet state=restarted daemon_reload=yes
+
+- hosts: all
+  become: true
+  gather_facts: true
+  serial: 1
+  tasks:
+    - name: drain node
+      shell: "kubectl uncordon {{ ansible_nodename }}"
+      delegate_to: "{{ groups['masters'] | first }}"
+      environment: 
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      args:
+        executable: /bin/bash
+

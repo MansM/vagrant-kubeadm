@@ -7,7 +7,7 @@
   tasks:
     - set_fact:
           POD_CIDR: "{{ POD_CIDR }}"
-          kube_version: "1.12.1"
+          kube_version: "1.13.1"
       tags: addworker
 
     - name: set hostname in /etc/hosts
@@ -218,7 +218,7 @@
   gather_facts: true
   tasks:
     - name: get images
-      shell: kubeadm config images pull
+      shell: kubeadm config images pull --kubernetes-version={{ kube_version }}
       register: result_pull
       retries: 3
       delay: 5
