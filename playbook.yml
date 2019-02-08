@@ -7,7 +7,7 @@
   tasks:
     - set_fact:
           POD_CIDR: "{{ POD_CIDR }}"
-          kube_version: "1.13.1"
+          kube_version: "1.13.3"
       tags: addworker
 
     - name: set hostname in /etc/hosts
