@@ -4,14 +4,19 @@
   vars:  
     API_CIDR: 10.96.0.1
     POD_CIDR: 10.244.0.0/16
-    #WEAVE
-    # SERVICES_CIDR: 10.96.0.0/12
-    # POD_CIDR: 10.32.0.0/12
-    
   tasks:
     - set_fact:
           POD_CIDR: "{{ POD_CIDR }}"
-          kube_version: "1.11.3"
+          kube_version: "1.12.1"
+      tags: addworker
+
+    - name: set hostname in /etc/hosts
+      lineinfile:
+        path: /etc/hosts
+        regexp: '127.0.0.1'
+        line: "127.0.0.1 localhost {{ ansible_hostname }}"
+      tags: addworker
+
     ## install repo's and keys
     - name: add kubeadm repo (RedHat/CentOS)
       yum_repository:
@@ -22,85 +27,107 @@
         gpgcheck: 1
         repo_gpgcheck: 1
         gpgkey: https://packages.cloud.google.com/yum/doc/yum-key.gpg https://packages.cloud.google.com/yum/doc/rpm-package-key.gpg
-        #exclude: kube*
       when: ansible_os_family == "RedHat"
+      tags: addworker
 
     - name: get gpg key for debian/docker
       apt_key:
         url: https://download.docker.com/linux/debian/gpg
         state: present
       when: ansible_os_family == "Debian"
+      tags: addworker
 
     - name: get gpg key for debian/kubernetes
       apt_key:
         url: https://packages.cloud.google.com/apt/doc/apt-key.gpg
         state: present
       when: ansible_os_family == "Debian"
+      tags: addworker
 
     - name: install https option for debian
       package: name=apt-transport-https state=present
       when: ansible_os_family == "Debian"
+      tags: addworker
+
+    # - name: install docker repo
+    #   apt_repository:
+    #     repo: deb [arch=armhf] https://download.docker.com/linux/debian {{ ansible_distribution_release }} stable
+    #     state: present
+    #   when: ansible_os_family == "Debian" and ansible_architecture == "armv7l"
 
     - name: install docker repo
       apt_repository:
         repo: deb https://download.docker.com/linux/debian {{ ansible_distribution_release }} stable
         state: present
-      when: ansible_os_family == "Debian"
+      when: ansible_os_family == "Debian" and ansible_architecture != "armv7l"
+      tags: addworker
 
-    - name: install k8s repo
+    - name: install k8s repo (kubernetes-xenial because of availability for both platforms)
       apt_repository:
         repo: deb http://apt.kubernetes.io/ kubernetes-xenial main
         state: present
       when: ansible_os_family == "Debian"
+      tags: addworker
 
     ## Docker install
     - name: install docker (RedHat/CentOS)
       package: name=docker state=present
       when: ansible_os_family == "RedHat"
+      tags: addworker
 
     - name: install docker (Ubuntu/Debian/Etc)
       package: name=docker-ce state=present
       when: ansible_os_family == "Debian"
+      tags: addworker
 
     - name: start and enable docker
       service: name=docker state=started enabled=yes
+      tags: addworker
 
     ## Kubelet
     - name: install kubelet
       apt: name="kubelet={{ kube_version }}-00" state=present
       when: ansible_os_family == "Debian"
+      tags: addworker
 
     - name: install kubelet
       package: name=kubelet state=present
       when: ansible_os_family != "Debian"
+      tags: addworker
 
     - name: start & enable kubelet
       service: name=kubelet state=started enabled=true
+      tags: addworker
 
     ## Kubeadm
     - name: install kubeadm
-      package: name=kubeadm state=present
+      package: name="kubeadm={{ kube_version }}-00" state=present
+      tags: addworker
     
     ## SElinux
     - name: disable selinux
       selinux: state=permissive policy=targeted
       when: ansible_os_family == "RedHat"
+      tags: addworker
 
     - name: disable swap
       mount:
         fstype: swap
         path: swap
         state: absent
+      tags: addworker
 
     - name: disable swap
       mount:
         fstype: swap
         path: none
         state: absent
+      tags: addworker
       #when: ansible_os_family == "RedHat"
 
     - name: remove current swap
       shell: swapoff -a
+      tags: addworker
 
     - name: enable net.bridge.bridge-nf-call-iptables
       sysctl: 
@@ -109,14 +136,17 @@
         sysctl_set: yes
         state: present
         reload: yes
+      tags: addworker
 
     - name: install open-iscsi
       apt: name="open-iscsi" state=present
       when: ansible_os_family == "Debian"
+      tags: addworker
 
     - name: install iscsi-initiator-utils (RedHat/CentOS)
       package: name=iscsi-initiator-utils state=present
       when: ansible_os_family == "RedHat"
+      tags: addworker
 
 - hosts: masters
   become: true
@@ -138,26 +168,34 @@
   tasks:
     - set_fact: 
         ext_ip: "{{ ansible_eth0.ipv4.address }}"
+        cacheable: true
       when: 
         - ansible_os_family == "Debian"
+      tags: addworker
 
     - set_fact: 
         ext_ip: "{{ ansible_enp0s3.ipv4.address }}"
+        cacheable: true
       when: 
         - ansible_os_family == "RedHat"
+      tags: addworker
     
     #Vagrant is most likely used when using virtualbox, which takes the first nic for outside communication
     - set_fact: 
         ext_ip: "{{ ansible_eth1.ipv4.address }}"
+        cacheable: true
       when: 
         - ansible_virtualization_type == "virtualbox"
         - ansible_os_family == "Debian"
+      tags: addworker
 
     - set_fact: 
         ext_ip: "{{ ansible_enp0s8.ipv4.address }}"
+        cacheable: true
       when: 
         - ansible_virtualization_type == "virtualbox"
         - ansible_os_family == "RedHat"
+      tags: addworker
 
     - name: fix internal ip for vagrant
       lineinfile:
@@ -167,9 +205,13 @@
         state: present
       when: 
         - ansible_virtualization_type == "virtualbox"
+      tags: addworker
 
     - name: restart kubelet (only needed when previous changed)
       systemd: name=kubelet state=restarted daemon_reload=yes
+      when: 
+        - ansible_virtualization_type == "virtualbox"
+      tags: addworker
 
 - hosts: masters
   become: true
@@ -191,7 +233,8 @@
                 --node-name {{ ansible_nodename }} \
                 --apiserver-advertise-address={{ ext_ip }} \
                 --pod-network-cidr={{ POD_CIDR }} \
-                --kubernetes-version={{ kube_version }}
+                --kubernetes-version={{ kube_version }} \
+                --ignore-preflight-errors=SystemVerification
       register: kubeadm_result
       async: 1000
       poll: 0
@@ -206,12 +249,15 @@
       until: sed_result is succeeded
       register: sed_result
 
-    - name: pause 5 sec
+    - name: pause 10 sec
       pause:
-        seconds: 5
+        seconds: 10
 
     - name: kill api-server to restart
       shell: docker ps|grep k8s_kube-apiserver|awk {' print $1 '}|xargs docker kill
+      retries: 5
+      until: kill_result is succeeded
+      register: kill_result
       when: sed_result is succeeded
 
     - name: 'kubeadm sync checker'
@@ -242,10 +288,11 @@
       tags: addworker
 
     - name: join cluster
-      shell: kubeadm join 192.168.10.10:6443 \
+      shell: kubeadm join {{ hostvars[groups['masters'][0]]['ansible_facts'].ext_ip }}:6443 \
               --node-name {{ ansible_nodename }} \
               --token {{ token_result.stdout_lines[0] }} \
-              --discovery-token-ca-cert-hash sha256:{{ cacert_result.stdout_lines[0] }}
+              --discovery-token-ca-cert-hash sha256:{{ cacert_result.stdout_lines[0] }} \
+              --ignore-preflight-errors=SystemVerification
       tags: addworker
 
     - name: remove token
@@ -258,7 +305,7 @@
   gather_facts: yes
   tasks:
     - name: install flannel
-      shell: kubectl apply -f https://raw.githubusercontent.com/coreos/flannel/c5d10c8/Documentation/kube-flannel.yml
+      shell: kubectl apply -f https://raw.githubusercontent.com/coreos/flannel/master/Documentation/kube-flannel.yml
       environment: 
         KUBECONFIG: /etc/kubernetes/admin.conf
       args:
