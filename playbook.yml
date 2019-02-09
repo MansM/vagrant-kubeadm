@@ -7,7 +7,7 @@
   tasks:
     - set_fact:
           POD_CIDR: "{{ POD_CIDR }}"
-          kube_version: "1.13.3"
+          kube_version: "1.11.3"
       tags: addworker
 
     - name: set hostname in /etc/hosts
@@ -16,6 +16,15 @@
         regexp: '127.0.0.1'
         line: "127.0.0.1 localhost {{ ansible_hostname }}"
       tags: addworker
+
+    - name: set hostname in /boot/user-data
+      lineinfile:
+        path: /boot/user-data
+        regexp: 'hostname:'
+        line: "hostname: {{ ansible_hostname }}"
+      tags: addworker
+      when: ansible_os_family == "Debian" and ansible_architecture == "armv7l"
+
 
     ## install repo's and keys
     - name: add kubeadm repo (RedHat/CentOS)
