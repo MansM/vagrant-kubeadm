@@ -7,7 +7,7 @@
   tasks:
     - set_fact:
           POD_CIDR: "{{ POD_CIDR }}"
-          kube_version: "1.11.3"
+          kube_version: "1.13.3"
       tags: addworker
 
     - name: set hostname in /etc/hosts
@@ -77,6 +77,12 @@
         state: present
       when: ansible_os_family == "Debian"
       tags: addworker
+
+    - name: install bash (and update apt)
+      apt:
+        name: bash
+        update_cache: yes
+      ignore_errors: yes
 
     ## Docker install
     - name: install docker (RedHat/CentOS)
