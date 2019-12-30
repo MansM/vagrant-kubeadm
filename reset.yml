@@ -3,7 +3,7 @@
   gather_facts: true
   tasks:
     - set_fact:
-        kube_version: "1.13.3"
+        kube_version: "1.17.0"
     
     - name: kubeadm reset
       shell: kubeadm reset --force

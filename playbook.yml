@@ -7,7 +7,7 @@
   tasks:
     - set_fact:
           POD_CIDR: "{{ POD_CIDR }}"
-          kube_version: "1.13.3"
+          kube_version: "1.17.0"
       tags: addworker
 
     - name: set hostname in /etc/hosts
@@ -83,6 +83,7 @@
         name: bash
         update_cache: yes
       ignore_errors: yes
+      when: ansible_os_family == "Debian"
 
     ## Docker install
     - name: install docker (RedHat/CentOS)
@@ -110,6 +111,10 @@
       when: ansible_os_family != "Debian"
       tags: addworker
 
+    - name: start kubelet with daemon reload
+      systemd: name=kubelet state=started daemon_reload=yes
+      when: ansible_os_family == "RedHat"
+
     - name: start & enable kubelet
       service: name=kubelet state=started enabled=true
       tags: addworker
@@ -118,6 +123,12 @@
     - name: install kubeadm
       package: name="kubeadm={{ kube_version }}-00" state=present
       tags: addworker
+      when: ansible_os_family == "Debian"
+    
+    - name: install kubeadm
+      package: name="kubeadm-{{ kube_version }}" state=present
+      tags: addworker
+      when: ansible_os_family != "Debian"
     
     ## SElinux
     - name: disable selinux
@@ -189,7 +200,7 @@
       tags: addworker
 
     - set_fact: 
-        ext_ip: "{{ ansible_enp0s3.ipv4.address }}"
+        ext_ip: "{{ ansible_p1p4.ipv4.address }}"
         cacheable: true
       when: 
         - ansible_os_family == "RedHat"
@@ -326,14 +337,14 @@
       args:
         executable: /bin/bash
 
-    - name: install traeffik
-      shell: "kubectl apply -f {{ item }}"
-      environment: 
-        KUBECONFIG: /etc/kubernetes/admin.conf
-      args:
-        executable: /bin/bash
-      loop:
-        - "https://raw.githubusercontent.com/containous/traefik/master/examples/k8s/traefik-rbac.yaml"
-        - "https://raw.githubusercontent.com/containous/traefik/master/examples/k8s/traefik-ds.yaml"
+    # - name: install traeffik
+    #   shell: "kubectl apply -f {{ item }}"
+    #   environment: 
+    #     KUBECONFIG: /etc/kubernetes/admin.conf
+    #   args:
+    #     executable: /bin/bash
+    #   loop:
+    #     - "https://raw.githubusercontent.com/containous/traefik/master/examples/k8s/traefik-rbac.yaml"
+    #     - "https://raw.githubusercontent.com/containous/traefik/master/examples/k8s/traefik-ds.yaml"
 
 
